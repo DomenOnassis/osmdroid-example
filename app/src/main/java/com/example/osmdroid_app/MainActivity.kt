@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -24,6 +25,8 @@ class MainActivity : AppCompatActivity() {
 
         mapView = findViewById(R.id.mapView)
         mapView.setMultiTouchControls(true)
+        mapView.setTileSource(TileSourceFactory.MAPNIK)
+        //mapView.setTileSource(TileSourceFactory.OpenTopo)
 
         val mapController = mapView.controller
         mapController.setZoom(15.0)

@@ -172,7 +172,7 @@ marker.setOnMarkerClickListener { _, _ ->
 marker.isDraggable = true
 ```
 
-# Uporaba v projektu Safe&Sound
+# Uporaba v aplikaciji Safe&Sound (vaja pri PORA)
 ![Untitled design (1)](https://github.com/user-attachments/assets/8d6c123e-86b0-4795-b89b-398096060fa6)
 
 

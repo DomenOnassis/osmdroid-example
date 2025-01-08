@@ -172,6 +172,285 @@ marker.setOnMarkerClickListener { _, _ ->
 marker.isDraggable = true
 ```
 
+# Uporaba v projektu Safe&Sound
+```kotlin
+...
+private fun setupMap() {
+        val darkTileSource = XYTileSource(
+            "DarkMatter",
+            0,
+            19,
+            256,
+            ".png",
+            arrayOf("https://a.basemaps.cartocdn.com/dark_all/")
+        )
+        val sharedPreferences = SafeAndSoundApp.getSharedPreferences(requireContext())
+        val isDarkMode = sharedPreferences.getBoolean(SafeAndSoundApp.THEME_PREF_KEY, false)
+
+        mapView.setTileSource(if (isDarkMode) {
+            darkTileSource
+        } else {
+            TileSourceFactory.MAPNIK
+        })
+
+        mapView.isClickable = true
+        mapView.setMultiTouchControls(true)
+        mapView.setBuiltInZoomControls(false)
+
+        val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
+            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                Log.d("MapFragment", "Tapped Location - Lat: ${p.latitude}, Lon: ${p.longitude}")
+                if (isDrawingEnabled) {
+                    addPointToSafeArea(p)
+                }
+                return true
+            }
+
+            override fun longPressHelper(p: GeoPoint): Boolean {
+                handlePolygonLongPress(p)
+                return true
+            }
+        })
+        mapView.overlays.add(0, eventsOverlay)
+    }
+
+    private fun observeSafeAreas() {
+        val currentUserId = auth.currentUser?.uid ?: run {
+            Log.e("MapFragment", "User is not authenticated")
+            return
+        }
+
+        val ownedAreasQuery = firestore.collection("users")
+            .document(currentUserId)
+            .collection("safeAreas")
+
+        val memberAreasQuery = firestore.collectionGroup("members")
+            .whereEqualTo("uid", currentUserId)
+
+        ownedAreasQuery.addSnapshotListener { snapshot, exception ->
+            if (exception != null) {
+                Log.e("MapFragment", "Failed to listen for owned safe areas: ${exception.message}")
+                return@addSnapshotListener
+            }
+
+            if (snapshot != null) {
+                mapView.overlays.removeAll { overlay -> overlay is Polygon && overlay.title == "Owned" }
+
+                for (document in snapshot.documents) {
+                    val pointsData = document.get("points") as? List<Map<String, Double>> ?: continue
+                    val geoPoints = pointsData.map { point ->
+                        GeoPoint(point["lat"] ?: 0.0, point["lon"] ?: 0.0)
+                    }
+                    addSafeAreaToMap(geoPoints, document.id, "Owned")
+                }
+
+                mapView.invalidate()
+                Log.d("MapFragment", "Owned safe areas updated in real-time")
+            }
+        }
+
+        memberAreasQuery.addSnapshotListener { snapshot, exception ->
+            if (exception != null) {
+                Log.e("MapFragment", "Failed to listen for member safe areas: ${exception.message}")
+                return@addSnapshotListener
+            }
+
+            if (snapshot != null) {
+                mapView.overlays.removeAll { overlay -> overlay is Polygon && overlay.title == "Member" }
+
+                for (document in snapshot.documents) {
+                    val safeAreaDoc = document.reference.parent?.parent ?: continue
+                    safeAreaDoc.get().addOnSuccessListener { areaDoc ->
+                        val pointsData = areaDoc.get("points") as? List<Map<String, Double>> ?: emptyList()
+                        val geoPoints = pointsData.map { point ->
+                            GeoPoint(point["lat"] ?: 0.0, point["lon"] ?: 0.0)
+                        }
+                        addSafeAreaToMap(geoPoints, areaDoc.id, "Member")
+                    }
+                }
+
+                mapView.invalidate()
+                Log.d("MapFragment", "Member safe areas updated in real-time")
+            }
+        }
+    }
+
+    private fun addSafeAreaToMap(points: List<GeoPoint>, documentId: String, type: String) {
+        if (points.size < 3) return
+        val polygon = Polygon().apply {
+            this.points = points
+            title = type
+            fillPaint.color = if (type == "Owned") 0x44FF0000 else 0x440000FF
+            outlinePaint.color = if (type == "Owned") 0xFFFF0000.toInt() else 0xFF0000FF.toInt()
+            outlinePaint.strokeWidth = 3f
+            if(type == "Owned") {
+                setOnClickListener { _, _, _ ->
+                    if (isEditing) {
+                        if (polygonMetadata[this] != null) {
+                            showRenameAreaDialog(this, documentId)
+                        }
+                    }
+                    true
+                }
+            }
+        }
+        if(type == "Owned") {
+            polygonMetadata[polygon] = documentId
+            Log.d("SAFE AREA", "Owned polygon added to metadata: $documentId")
+        } else {
+            polygonMemberMetadata[polygon] = documentId
+            Log.d("SAFE AREA", "Member polygon added to metadata: $documentId")
+        }
+        mapView.overlays.add(polygon)
+
+        getArea(documentId) { area ->
+            val center = getPolygonCenter(points)
+            val titleMarker = Marker(mapView).apply {
+                position = center
+                if (area != null) {
+                    title = area.name
+                }
+                if (area != null) {
+                    snippet = getString(R.string.created_by, area.author)
+                }
+                icon = ResourcesCompat.getDrawable(
+                    requireContext().resources,
+                    R.drawable.ic_house,
+                    null
+                )
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            }
+            titleMarker.infoWindow = CustomInfoWindow(R.layout.marker_popup, mapView)
+            titleMarker.setOnMarkerClickListener { clickedMarker, _ ->
+                if (clickedMarker.infoWindow?.isOpen == true) {
+                    clickedMarker.closeInfoWindow()
+                } else {
+                    InfoWindow.closeAllInfoWindowsOn(mapView)
+                    clickedMarker.showInfoWindow()
+                }
+                true
+            }
+            mapView.overlays.add(titleMarker)
+            if(type == "Owned") {
+                polygonTitleMarkers[polygon] = titleMarker
+            } else {
+                polygonMemberTitleMarkers[polygon] = titleMarker
+            }
+            mapView.invalidate()
+        }
+    }
+
+    private fun addPointToSafeArea(point: GeoPoint) {
+        safeAreaPoints.add(point)
+
+        val pointMarker = Marker(mapView).apply {
+            position = point
+            icon = ResourcesCompat.getDrawable(
+                requireContext().resources,
+                R.drawable.filled_circle,
+                null
+            )
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+        }
+        safeZoneMarkers.add(pointMarker)
+        mapView.overlays.add(pointMarker)
+        drawSafeArea()
+        mapView.invalidate()
+
+        if (safeAreaPoints.size >= 3) {
+            saveButton.visibility = View.VISIBLE
+            stopDrawingButton.visibility = View.VISIBLE
+        }
+
+    }
+
+    private fun drawSafeArea() {
+        if (safeAreaPoints.size < 2) return
+
+        if (safeAreaPolygon != null) {
+            mapView.overlays.remove(safeAreaPolygon)
+        }
+
+        val pointsToDraw = ArrayList(safeAreaPoints)
+        pointsToDraw.add(safeAreaPoints[0])
+
+        safeAreaPolygon = Polygon().apply {
+            points = pointsToDraw
+            fillPaint.color = 0x44FF0000
+            outlinePaint.color = 0xFFFF0000.toInt()
+            outlinePaint.strokeWidth = 3f
+        }
+
+        mapView.overlays.add(safeAreaPolygon)
+        mapView.invalidate()
+    }
+
+    private fun finalizeSafeArea() {
+        saveButton.visibility = View.INVISIBLE
+        if (safeAreaPoints.size < 3) {
+            Log.d("MapFragment", getString(R.string.not_enough_points))
+            return
+        }
+        Log.d("MapFragment", "Safe area finalized")
+        hideMarkers()
+        isDrawingEnabled = false
+        deleteCurrent()
+    }
+    private fun handlePolygonLongPress(point: GeoPoint) {
+        for (overlay in mapView.overlays) {
+            if (overlay is Polygon && overlay.bounds.contains(point)) {
+                val documentId = polygonMetadata[overlay]
+                if (documentId != null) {
+                    showDeleteSafeAreaDialog(overlay, documentId)
+                    return
+                }
+            }
+        }
+    }
+
+    private fun showFriendLocation(friendId: String) {
+        val friend = friendsViewModel.friendsList.value?.find { it.uuid == friendId }
+
+        if (friend != null) {
+            val friendLocation = GeoPoint(friend.lat, friend.lon)
+            Log.d("MapFragment", "Found friend's location in LiveData: $friendLocation")
+
+            mapView.controller.animateTo(friendLocation)
+            if (mapView.zoomLevelDouble < 21.5) {
+                mapView.controller.setZoom(21.5)
+            }
+            mapView.invalidate()
+        } else {
+            Log.e("MapFragment", "Friend with ID $friendId not found in LiveData.")
+        }
+    }
+    ...
+    private fun refreshCurrentAreas() {
+        deleteCurrent()
+
+        polygonMetadata.forEach { mapView.overlays.remove(it.key) }
+        polygonMetadata.clear()
+
+        polygonTitleMarkers.forEach { mapView.overlays.remove(it.value) }
+        polygonTitleMarkers.clear()
+
+        mapView.invalidate()
+        Log.d("MapFragment", getString(R.string.safe_area_deleted))
+    }
+
+    private fun deleteCurrent() {
+        safeAreaPoints.clear()
+        safeZoneMarkers.forEach { mapView.overlays.remove(it) }
+        safeZoneMarkers.clear()
+        if (safeAreaPolygon != null) {
+            mapView.overlays.remove(safeAreaPolygon)
+            safeAreaPolygon = null
+        }
+        mapView.invalidate()
+    }
+```
+
+![Untitled design (1)](https://github.com/user-attachments/assets/8d6c123e-86b0-4795-b89b-398096060fa6)
 
 
 

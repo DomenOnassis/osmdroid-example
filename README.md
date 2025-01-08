@@ -46,6 +46,12 @@ Zadnja verzija: 6.1.20 - Aug 18, 2024
 
 # Primer uporabe
 Uporablja se MapView komponenta
+```xml
+<org.osmdroid.views.MapView
+        android:id="@+id/mapView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+```
 ```kotlin
 private lateinit var mapView: MapView
 

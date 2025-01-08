@@ -173,6 +173,9 @@ marker.isDraggable = true
 ```
 
 # Uporaba v projektu Safe&Sound
+![Untitled design (1)](https://github.com/user-attachments/assets/8d6c123e-86b0-4795-b89b-398096060fa6)
+
+
 ```kotlin
 ...
 private fun setupMap() {
@@ -449,9 +452,6 @@ private fun setupMap() {
         mapView.invalidate()
     }
 ```
-
-![Untitled design (1)](https://github.com/user-attachments/assets/8d6c123e-86b0-4795-b89b-398096060fa6)
-
 
 
 
